@@ -10,9 +10,21 @@ import { SAMPLES, Sample } from "../samples";
 import * as playground from "../samples/playground";
 import { compress, decompress } from "../utils/compression/compression";
 import { AIConfig, ChatState, KeyProtectionLevel } from '../types/components/AIAssistant.types';
-import { validateBeforeRebuild } from "../utils/validators";
+import { validateBeforeRebuild, validateRuntimePayload } from "../utils/validators";
+import { compileLogicTs } from "../utils/logicCompiler";
+import type { CompileError } from "../utils/logicCompiler";
+
+/** A single trigger execution result, stored in history */
+export interface LogicExecutionResult {
+  response: object;
+  stateBefore: object;
+  stateAfter: object;
+  events: object[];
+  executedAt: string; // ISO timestamp
+}
 
 interface AppState {
+  // ── Existing template / model / data fields ────────────────────────────
   templateMarkdown: string;
   editorValue: string;
   modelCto: string;
@@ -30,6 +42,30 @@ interface AppState {
   chatState: ChatState;
   aiConfig: AIConfig | null;
   chatAbortController: AbortController | null;
+
+  // ── Logic / execution fields (NEW) ────────────────────────────────────
+  /** Committed TypeScript logic source (triggers compilation) */
+  logicTs: string;
+  /** Live editor value — not committed until user clicks Apply */
+  editorLogicTs: string;
+  /** Compiled JavaScript ready for Worker execution (null = not compiled / error) */
+  compiledLogicJs: string | null;
+  /** Current initialized contract state (null = not yet initialized) */
+  contractState: object | null;
+  /** All past trigger execution results */
+  executionHistory: LogicExecutionResult[];
+  /** Most recent trigger result for display */
+  latestExecution: LogicExecutionResult | null;
+  /** True while TypeScript → JavaScript compilation is running */
+  isCompiling: boolean;
+  /** True while Worker is executing init() or trigger() */
+  isExecuting: boolean;
+  /** Compile or runtime error from logic — separate from template `error` */
+  logicError: string | undefined;
+  /** Compile errors with line info for Monaco markers */
+  logicCompileErrors: CompileError[];
+
+  // ── Existing action signatures ─────────────────────────────────────────
   setTemplateMarkdown: (template: string) => Promise<void>;
   setEditorValue: (value: string) => void;
   setModelCto: (model: string) => Promise<void>;
@@ -68,6 +104,18 @@ interface AppState {
   setSettingsOpen: (value: boolean) => void;
   keyProtectionLevel: KeyProtectionLevel | null;
   setKeyProtectionLevel: (level: KeyProtectionLevel | null) => void;
+
+  // ── Logic action signatures (NEW) ─────────────────────────────────────
+  /** Update live editor value without compiling */
+  setEditorLogicTs: (ts: string) => void;
+  /** Commit logic — applies editorLogicTs, compiles to JS, resets execution state */
+  setLogicTs: (ts: string) => Promise<void>;
+  /** Spin up a Worker to call init() on the compiled logic */
+  initContract: () => Promise<void>;
+  /** Spin up a Worker to call trigger() with the given request JSON string */
+  triggerContract: (requestJson: string) => Promise<void>;
+  /** Clear execution history */
+  clearExecutionHistory: () => void;
 }
 
 export interface DecompressedData {
@@ -75,6 +123,23 @@ export interface DecompressedData {
   modelCto: string;
   data: string;
   agreementHtml: string;
+}
+
+// ── Module-level Worker management (outside Zustand — Workers aren't React state) ──
+let activeLogicWorker: Worker | null = null;
+let workerTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const WORKER_TIMEOUT_MS = 10_000; // kill runaway logic after 10 seconds
+
+function terminateActiveWorker() {
+  if (activeLogicWorker) {
+    activeLogicWorker.terminate();
+    activeLogicWorker = null;
+  }
+  if (workerTimeout !== null) {
+    clearTimeout(workerTimeout);
+    workerTimeout = null;
+  }
 }
 
 const rebuildDeBounce = debounce(rebuild, 500);
@@ -204,6 +269,18 @@ const useAppStore = create<AppState>()(
         showLineNumbers: getInitialLineNumbers(),
         isSettingsOpen: false,
         keyProtectionLevel: null,
+        // ── Logic initial state ────────────────────────────────────────────
+        logicTs: '',
+        editorLogicTs: '',
+        compiledLogicJs: null,
+        contractState: null,
+        executionHistory: [],
+        latestExecution: null,
+        isCompiling: false,
+        isExecuting: false,
+        logicError: undefined,
+        logicCompileErrors: [],
+
         toggleModelCollapse: () => set((state) => ({ isModelCollapsed: !state.isModelCollapsed })),
         toggleTemplateCollapse: () => set((state) => ({ isTemplateCollapsed: !state.isTemplateCollapsed })),
         toggleDataCollapse: () => set((state) => ({ isDataCollapsed: !state.isDataCollapsed })),
@@ -246,6 +323,7 @@ const useAppStore = create<AppState>()(
         loadSample: async (name: string) => {
           const sample = SAMPLES.find((s) => s.NAME === name);
           if (sample) {
+            const logicTs = sample.LOGIC ?? '';
             set(() => ({
               sampleName: sample.NAME,
               agreementHtml: undefined,
@@ -256,10 +334,26 @@ const useAppStore = create<AppState>()(
               editorModelCto: sample.MODEL,
               data: JSON.stringify(sample.DATA, null, 2),
               editorAgreementData: JSON.stringify(sample.DATA, null, 2),
+              // Reset logic state when switching samples
+              logicTs,
+              editorLogicTs: logicTs,
+              compiledLogicJs: null,
+              contractState: null,
+              executionHistory: [],
+              latestExecution: null,
+              logicError: undefined,
+              logicCompileErrors: [],
+              isCompiling: false,
+              isExecuting: false,
             }));
             await get().rebuild();
+            // Auto-compile if sample has logic
+            if (logicTs) {
+              await get().setLogicTs(logicTs);
+            }
           }
         },
+
         rebuild: async () => {
           const { templateMarkdown, modelCto, data } = get();
           try {
@@ -404,6 +498,343 @@ const useAppStore = create<AppState>()(
         },
         startTour: () => {
           console.log('Starting tour...');
+        },
+
+        // ── Logic actions (NEW) ────────────────────────────────────────────
+
+        setEditorLogicTs: (ts: string) => {
+          set(() => ({ editorLogicTs: ts }));
+        },
+
+        setLogicTs: async (ts: string) => {
+          terminateActiveWorker();
+          set(() => ({
+            logicTs: ts,
+            editorLogicTs: ts,
+            isCompiling: true,
+            logicError: undefined,
+            logicCompileErrors: [],
+            // Reset execution state whenever logic changes
+            contractState: null,
+            executionHistory: [],
+            latestExecution: null,
+          }));
+          try {
+            const result = await compileLogicTs(ts);
+            if (result.hasError) {
+              set(() => ({
+                compiledLogicJs: null,
+                isCompiling: false,
+                logicError: result.errors
+                  .map((e) => `Logic: ${e.message}${e.line ? ` (line ${e.line})` : ''}`)
+                  .join('\n'),
+                logicCompileErrors: result.errors,
+                isProblemPanelVisible: true,
+              }));
+            } else {
+              set(() => ({
+                compiledLogicJs: result.jsCode,
+                isCompiling: false,
+                logicError: undefined,
+                logicCompileErrors: [],
+              }));
+            }
+          } catch (err: unknown) {
+            set(() => ({
+              compiledLogicJs: null,
+              isCompiling: false,
+              logicError: formatError(err),
+              isProblemPanelVisible: true,
+            }));
+          }
+        },
+
+        initContract: async () => {
+          const { compiledLogicJs, data, modelCto } = get();
+          if (!compiledLogicJs) {
+            set(() => ({
+              logicError: 'Logic has compile errors. Fix them before initializing.',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+          let contractData: object;
+          try {
+            contractData = JSON.parse(data) as object;
+          } catch {
+            set(() => ({
+              logicError: 'JSON Data is invalid. Fix it before initializing.',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+
+          terminateActiveWorker();
+          set(() => ({ isExecuting: true, logicError: undefined }));
+
+          return new Promise<void>((resolve) => {
+            let worker: Worker;
+            try {
+              worker = new Worker(
+                new URL('../workers/logicWorker.ts', import.meta.url),
+                { type: 'module' }
+              );
+            } catch (workerCreateError: unknown) {
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker failed to start during init: ${formatError(workerCreateError)}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+              return;
+            }
+            activeLogicWorker = worker;
+
+            workerTimeout = setTimeout(() => {
+              terminateActiveWorker();
+              set(() => ({
+                isExecuting: false,
+                logicError: 'Init timed out after 10 seconds. Check for infinite loops in your logic.',
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            }, WORKER_TIMEOUT_MS);
+
+            worker.onmessage = async (event: MessageEvent) => {
+              terminateActiveWorker();
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              const msg = event.data as { type: string; action: string; state?: object; events?: object[]; message?: string };
+              if (msg.type === 'success') {
+                const nextState = msg.state ?? {};
+                try {
+                  await validateRuntimePayload({
+                    model: modelCto,
+                    state: nextState,
+                    events: msg.events ?? [],
+                  });
+                } catch (validationError: unknown) {
+                  set(() => ({
+                    isExecuting: false,
+                    logicError: `Init produced invalid runtime payload: ${formatError(validationError)}`,
+                    isProblemPanelVisible: true,
+                  }));
+                  resolve();
+                  return;
+                }
+
+                set(() => ({
+                  contractState: nextState,
+                  isExecuting: false,
+                  logicError: undefined,
+                }));
+              } else {
+                set(() => ({
+                  isExecuting: false,
+                  logicError: `Init failed: ${msg.message ?? 'Unknown error'}`,
+                  isProblemPanelVisible: true,
+                }));
+              }
+              resolve();
+            };
+
+            worker.onerror = (err) => {
+              terminateActiveWorker();
+              const errMsg = err.message
+                ? err.message
+                : `Worker failed to load (${err.filename ?? 'unknown'}:${err.lineno ?? '?'})`;
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker error during init: ${errMsg}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            };
+
+            try {
+              worker.postMessage({
+                action: 'init',
+                modelCto,
+                logicJs: compiledLogicJs,
+                contractData,
+              });
+            } catch (postMessageError: unknown) {
+              terminateActiveWorker();
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker postMessage failed during init: ${formatError(postMessageError)}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            }
+          });
+        },
+
+        triggerContract: async (requestJson: string) => {
+          const { compiledLogicJs, data, contractState, modelCto } = get();
+          if (!compiledLogicJs) {
+            set(() => ({
+              logicError: 'Logic has compile errors. Please fix them first.',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+          if (!contractState) {
+            set(() => ({
+              logicError: 'Contract must be initialized first. Click "Init Contract".',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+
+          let contractData: object;
+          let request: object;
+          try {
+            contractData = JSON.parse(data) as object;
+          } catch {
+            set(() => ({
+              logicError: 'JSON Data is invalid.',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+          try {
+            request = JSON.parse(requestJson) as object;
+          } catch {
+            set(() => ({
+              logicError: 'Request JSON is invalid. Please enter valid JSON.',
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+
+          try {
+            await validateRuntimePayload({ model: modelCto, request, state: contractState });
+          } catch (validationError: unknown) {
+            set(() => ({
+              logicError: `Invalid request/state runtime payload: ${formatError(validationError)}`,
+              isProblemPanelVisible: true,
+            }));
+            return;
+          }
+
+          const stateBefore = contractState;
+          terminateActiveWorker();
+          set(() => ({ isExecuting: true, logicError: undefined }));
+
+          return new Promise<void>((resolve) => {
+            let worker: Worker;
+            try {
+              worker = new Worker(
+                new URL('../workers/logicWorker.ts', import.meta.url),
+                { type: 'module' }
+              );
+            } catch (workerCreateError: unknown) {
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker failed to start during trigger: ${formatError(workerCreateError)}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+              return;
+            }
+            activeLogicWorker = worker;
+
+            workerTimeout = setTimeout(() => {
+              terminateActiveWorker();
+              set(() => ({
+                isExecuting: false,
+                logicError: 'Trigger timed out after 10 seconds. Check for infinite loops in your logic.',
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            }, WORKER_TIMEOUT_MS);
+
+            worker.onmessage = async (event: MessageEvent) => {
+              terminateActiveWorker();
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              const msg = event.data as { type: string; action: string; result?: object; response?: object; state?: object; events?: object[]; message?: string };
+              if (msg.type === 'success') {
+                const nextState = msg.state ?? stateBefore;
+                const nextResponse = msg.response ?? msg.result ?? {};
+                const nextEvents = msg.events ?? [];
+
+                try {
+                  await validateRuntimePayload({
+                    model: modelCto,
+                    response: nextResponse,
+                    state: nextState,
+                    events: nextEvents,
+                  });
+                } catch (validationError: unknown) {
+                  set(() => ({
+                    isExecuting: false,
+                    logicError: `Trigger produced invalid runtime payload: ${formatError(validationError)}`,
+                    isProblemPanelVisible: true,
+                  }));
+                  resolve();
+                  return;
+                }
+
+                const execution: LogicExecutionResult = {
+                  response: nextResponse,
+                  stateBefore,
+                  stateAfter: nextState,
+                  events: nextEvents,
+                  executedAt: new Date().toISOString(),
+                };
+                set((state) => ({
+                  contractState: nextState,
+                  latestExecution: execution,
+                  executionHistory: [...state.executionHistory, execution],
+                  isExecuting: false,
+                  logicError: undefined,
+                }));
+              } else {
+                set(() => ({
+                  isExecuting: false,
+                  logicError: `Trigger failed: ${msg.message ?? 'Unknown error'}`,
+                  isProblemPanelVisible: true,
+                }));
+              }
+              resolve();
+            };
+
+            worker.onerror = (err) => {
+              terminateActiveWorker();
+              const errMsg = err.message
+                ? err.message
+                : `Worker failed to load (${err.filename ?? 'unknown'}:${err.lineno ?? '?'})`;
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker error during trigger: ${errMsg}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            };
+
+            try {
+              worker.postMessage({
+                action: 'trigger',
+                modelCto,
+                logicJs: compiledLogicJs,
+                contractData,
+                request,
+                state: stateBefore,
+              });
+            } catch (postMessageError: unknown) {
+              terminateActiveWorker();
+              set(() => ({
+                isExecuting: false,
+                logicError: `Worker postMessage failed during trigger: ${formatError(postMessageError)}`,
+                isProblemPanelVisible: true,
+              }));
+              resolve();
+            }
+          });
+        },
+
+        clearExecutionHistory: () => {
+          set(() => ({ executionHistory: [], latestExecution: null }));
         },
       }
     })

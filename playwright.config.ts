@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const E2E_BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:4173';
+const REUSE_E2E_SERVER = process.env.PW_REUSE_SERVER === '1';
+
 export default defineConfig({
   testDir: './e2e',
   // Run tests serially in CI for stability, parallel locally for speed
@@ -9,14 +12,14 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: E2E_BASE_URL,
     trace: 'on-first-retry',
     // Set localStorage to prevent shepherd tour from appearing
     storageState: {
       cookies: [],
       origins: [
         {
-          origin: 'http://localhost:5173',
+          origin: E2E_BASE_URL,
           localStorage: [
             {
               name: 'hasVisited',
@@ -34,9 +37,10 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    command: 'npm run dev:e2e',
+    url: E2E_BASE_URL,
+    // Default to a fresh server for deterministic runs. Opt in to reuse with PW_REUSE_SERVER=1.
+    reuseExistingServer: REUSE_E2E_SERVER && !process.env.CI,
+    timeout: 180000,
   },
 });

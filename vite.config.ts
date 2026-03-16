@@ -13,6 +13,9 @@ const viteConfig = defineViteConfig({
     include: ["immer"],
     needsInterop: ['@accordproject/template-engine'],
   },
+  worker: {
+    format: 'es', // Required for dynamic import() inside Web Workers
+  },
 });
 
 

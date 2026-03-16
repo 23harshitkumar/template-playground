@@ -2,6 +2,9 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import AgreementData from "../editors/editorsContainer/AgreementData";
 import TemplateModel from "../editors/editorsContainer/TemplateModel";
 import TemplateMarkdown from "../editors/editorsContainer/TemplateMarkdown";
+import LogicEditor from "../editors/LogicEditor";
+import ContractRunner from "../components/ContractRunner";
+import ExecutionPanel from "../components/ExecutionPanel";
 import useAppStore from "../store/store";
 import { AIChatPanel } from "../components/AIChatPanel";
 import ProblemPanel from "../components/ProblemPanel";
@@ -80,13 +83,24 @@ const MainContainer = () => {
     toggleDataCollapse: state.toggleDataCollapse,
   }));
 
+  const sampleName = useAppStore((s) => s.sampleName);
+  const samples = useAppStore((s) => s.samples);
+  const editorLogicTs = useAppStore((s) => s.editorLogicTs);
+  // Show Logic Editor and Contract Runner whenever the session has logic content
+  const hasLogic = editorLogicTs.trim().length > 0 ||
+    !!(samples.find((s) => s.NAME === sampleName)?.LOGIC);
+
   const [, setLoading] = useState(true);
 
-  // Calculate dynamic panel sizes based on collapse states
-  const collapsedCount = [isModelCollapsed, isTemplateCollapsed, isDataCollapsed].filter(Boolean).length;
-  const expandedCount = 3 - collapsedCount;
+  // Calculate dynamic panel sizes based on visible editors and collapse states.
+  // This keeps initial editor heights equal (4 editors => 25% each, 3 editors => 33.33% each).
   const collapsedSize = 5;
-  const expandedSize = expandedCount > 0 ? (100 - (collapsedCount * collapsedSize)) / expandedCount : 33;
+  const totalEditorPanels = hasLogic ? 4 : 3;
+  const collapsedCount = [isModelCollapsed, isDataCollapsed].filter(Boolean).length;
+  const nonCollapsedCount = totalEditorPanels - collapsedCount;
+  const expandedSize = nonCollapsedCount > 0
+    ? (100 - (collapsedCount * collapsedSize)) / nonCollapsedCount
+    : 100 / totalEditorPanels;
   
   // Create distinct preview background for better visual separation
   const previewBackgroundColor = backgroundColor === '#ffffff' 
@@ -99,6 +113,8 @@ const MainContainer = () => {
   
   // Create a key that changes when collapse state changes to force panel re-layout
   const panelKey = `${String(isModelCollapsed)}-${String(isTemplateCollapsed)}-${String(isDataCollapsed)}`;
+  const showRightPanel = hasLogic || isPreviewVisible;
+
 
   return (
     <div className="main-container" style={{ backgroundColor }}>
@@ -144,7 +160,7 @@ const MainContainer = () => {
                   </Panel>
                   <PanelResizeHandle className="main-container-panel-resize-handle-vertical" />
 
-                  <Panel minSize={20}>
+                  <Panel minSize={10} defaultSize={expandedSize}>
                     <MarkdownEditorProvider>
                       <div className="main-container-editor-section tour-template-mark">
                         <div className={`main-container-editor-header ${backgroundColor === '#ffffff' ? 'main-container-editor-header-light' : 'main-container-editor-header-dark'}`}>
@@ -199,6 +215,22 @@ const MainContainer = () => {
                       )}
                     </div>
                   </Panel>
+                  {/* Logic Editor Panel — appears when session has logic */}
+                  {hasLogic && (
+                    <>
+                      <PanelResizeHandle className="main-container-panel-resize-handle-vertical" />
+                      <Panel defaultSize={expandedSize} minSize={10}>
+                        <div className="main-container-editor-section">
+                          <div className={`main-container-editor-header ${backgroundColor === '#ffffff' ? 'main-container-editor-header-light' : 'main-container-editor-header-dark'}`}>
+                            <span style={{ color: textColor }}>TypeScript Logic</span>
+                          </div>
+                          <div className="main-container-editor-content" style={{ backgroundColor }}>
+                            <LogicEditor />
+                          </div>
+                        </div>
+                      </Panel>
+                    </>
+                  )}
                   {isProblemPanelVisible && (
                     <>
                       <PanelResizeHandle className="main-container-panel-resize-handle-vertical" />
@@ -213,35 +245,74 @@ const MainContainer = () => {
             <PanelResizeHandle className="main-container-panel-resize-handle-horizontal" />
           </>
         )}
-        {isPreviewVisible && (
+        {showRightPanel && (
           <>
             <Panel defaultSize={37.5} minSize={20}>
-              <div className="main-container-preview-panel tour-preview-panel" style={{ backgroundColor: previewBackgroundColor }}>
-                <div className={`main-container-preview-header ${backgroundColor === '#ffffff' ? 'main-container-preview-header-light' : 'main-container-preview-header-dark'}`} style={{ backgroundColor: previewHeaderColor }}>
-                  <span>Preview</span>
-                  <Button
-                    onClick={() => void handleDownloadPdf()}
-                    loading={isDownloading}
-                    style={{ marginLeft: "10px" }}
-                  >
-                    Download PDF
-                  </Button>
-                </div>
-                <div className="main-container-preview-content" style={{ backgroundColor: previewBackgroundColor }}>
-                  <div className="main-container-preview-text">
-                    <div
-                      ref={downloadRef}
-                      className="main-container-agreement"
-                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(agreementHtml) }}
-                      style={{
-                        color: textColor,
-                        backgroundColor: previewBackgroundColor,
-                        padding: "20px"
-                      }}
-                    />
+              {hasLogic ? (
+                // When logic is active: keep execution panels visible even if Preview is hidden.
+                <PanelGroup direction="vertical">
+                  {isPreviewVisible && (
+                    <>
+                      <Panel defaultSize={50} minSize={20}>
+                        <div className="main-container-preview-panel tour-preview-panel" style={{ backgroundColor: previewBackgroundColor }}>
+                          <div className={`main-container-preview-header ${backgroundColor === '#ffffff' ? 'main-container-preview-header-light' : 'main-container-preview-header-dark'}`} style={{ backgroundColor: previewHeaderColor }}>
+                            <span>Preview</span>
+                            <Button
+                              onClick={() => void handleDownloadPdf()}
+                              loading={isDownloading}
+                              style={{ marginLeft: "10px" }}
+                            >
+                              Download PDF
+                            </Button>
+                          </div>
+                          <div className="main-container-preview-content" style={{ backgroundColor: previewBackgroundColor }}>
+                            <div className="main-container-preview-text">
+                              <div
+                                ref={downloadRef}
+                                className="main-container-agreement"
+                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(agreementHtml) }}
+                                style={{ color: textColor, backgroundColor: previewBackgroundColor, padding: "20px" }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </Panel>
+                      <PanelResizeHandle className="main-container-panel-resize-handle-vertical" />
+                    </>
+                  )}
+                  <Panel defaultSize={isPreviewVisible ? 25 : 45} minSize={15}>
+                    <ContractRunner />
+                  </Panel>
+                  <PanelResizeHandle className="main-container-panel-resize-handle-vertical" />
+                  <Panel defaultSize={isPreviewVisible ? 25 : 55} minSize={15}>
+                    <ExecutionPanel />
+                  </Panel>
+                </PanelGroup>
+              ) : (
+                // No logic: show Preview only (existing behaviour)
+                <div className="main-container-preview-panel tour-preview-panel" style={{ backgroundColor: previewBackgroundColor }}>
+                  <div className={`main-container-preview-header ${backgroundColor === '#ffffff' ? 'main-container-preview-header-light' : 'main-container-preview-header-dark'}`} style={{ backgroundColor: previewHeaderColor }}>
+                    <span>Preview</span>
+                    <Button
+                      onClick={() => void handleDownloadPdf()}
+                      loading={isDownloading}
+                      style={{ marginLeft: "10px" }}
+                    >
+                      Download PDF
+                    </Button>
+                  </div>
+                  <div className="main-container-preview-content" style={{ backgroundColor: previewBackgroundColor }}>
+                    <div className="main-container-preview-text">
+                      <div
+                        ref={downloadRef}
+                        className="main-container-agreement"
+                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(agreementHtml) }}
+                        style={{ color: textColor, backgroundColor: previewBackgroundColor, padding: "20px" }}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </Panel>
             <PanelResizeHandle className="main-container-panel-resize-handle-horizontal" />
           </>

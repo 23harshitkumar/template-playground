@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App as AntdApp, Layout, Spin } from "antd";
 import { LoadingOutlined } from "@ant-design/icons";
 import { Routes, Route, useSearchParams, useNavigate } from "react-router-dom";
@@ -15,6 +15,8 @@ import AIConfigPopup from "./components/AIConfigPopup";
 const { Content } = Layout;
 
 const App = () => {
+  const APP_INIT_TIMEOUT_MS = 20000;
+
   const navigate = useNavigate();
   const init = useAppStore((state) => state.init);
   const loadFromLink = useAppStore((state) => state.loadFromLink);
@@ -26,10 +28,27 @@ const App = () => {
   const backgroundColor = useAppStore((state) => state.backgroundColor);
   const textColor = useAppStore((state) => state.textColor);
   const [loading, setLoading] = useState(true);
+  const didInitialize = useRef(false);
   const [searchParams] = useSearchParams();
 
 
   useEffect(() => {
+    if (didInitialize.current) {
+      return;
+    }
+    didInitialize.current = true;
+
+    const runWithTimeout = async (task: Promise<void>, timeoutMs: number): Promise<void> => {
+      await Promise.race([
+        task,
+        new Promise<void>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`App initialization timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        }),
+      ]);
+    };
+
     const initializeApp = async () => {
       try {
         setLoading(true);
@@ -38,15 +57,15 @@ const App = () => {
         if (window.location.hash.startsWith("#data=")) {
           compressedData = window.location.hash.substring(6);
         } else {
-          compressedData = searchParams.get("data");
+          compressedData = new URLSearchParams(window.location.search).get("data");
         }
         if (compressedData) {
-          await loadFromLink(compressedData);
+          await runWithTimeout(loadFromLink(compressedData), APP_INIT_TIMEOUT_MS);
           if (window.location.pathname !== "/") {
             navigate("/", { replace: true });
           }
         } else {
-          await init();
+          await runWithTimeout(init(), APP_INIT_TIMEOUT_MS);
         }
       } catch (error) {
         console.error("Initialization error:", error);
@@ -55,7 +74,7 @@ const App = () => {
       }
     };
     void initializeApp();
-  }, [init, loadFromLink, searchParams, navigate]);
+  }, [init, loadFromLink, navigate]);
 
   useEffect(() => {
     const style = document.createElement("style");

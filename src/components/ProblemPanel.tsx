@@ -14,11 +14,14 @@ export interface ProblemItem {
 }
 
 const ProblemPanel: React.FC = () => {
-  const { error, backgroundColor, textColor } = useAppStore((state) => ({
+  const { error, logicError, backgroundColor, textColor } = useAppStore((state) => ({
     error: state.error,
+    logicError: state.logicError,
     backgroundColor: state.backgroundColor,
     textColor: state.textColor
   }));
+
+  const mergedError = [error, logicError].filter(Boolean).join('\n');
 
   const parseError = (errorMessage: string) => {
     const errors: Omit<ProblemItem, 'id' | 'timestamp'>[] = [];
@@ -38,6 +41,10 @@ const ProblemPanel: React.FC = () => {
         type = 'warning';
       } else if (part.includes('Info') || part.includes('info')) {
         type = 'info';
+      }
+
+      if (part.includes('Logic:') || part.includes('Init failed') || part.includes('Trigger failed') || part.includes('Worker error')) {
+        source = 'Template Compilation';
       }
 
       // Detect source based on error content
@@ -65,15 +72,15 @@ const ProblemPanel: React.FC = () => {
   };
 
   const problems = useMemo((): ProblemItem[] => {
-    if (!error) return [];
+    if (!mergedError) return [];
 
-    const parsedErrors = parseError(error);
+    const parsedErrors = parseError(mergedError);
     return parsedErrors.map((parsedError, index) => ({
       id: `error-${Date.now()}-${index}`,
       timestamp: new Date(),
       ...parsedError
     }));
-  }, [error]);
+  }, [mergedError]);
 
 
   const formatTimestamp = (timestamp: Date) => {

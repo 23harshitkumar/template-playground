@@ -17,7 +17,7 @@ vi.mock("../../utils/editorNavigation", async () => {
 describe("ProblemPanel", () => {
   beforeEach(() => {
     // Clear store state and reset mocks
-    useAppStore.setState({ error: undefined, backgroundColor: '#ffffff', textColor: '#000000' });
+    useAppStore.setState({ error: undefined, logicError: undefined, backgroundColor: '#ffffff', textColor: '#000000' });
     vi.clearAllMocks();
   });
 
@@ -38,6 +38,20 @@ describe("ProblemPanel", () => {
     render(<ProblemPanel />);
     
     expect(screen.getByText(/Test error/i)).toBeInTheDocument();
+    expect(screen.queryByText("No problems detected")).not.toBeInTheDocument();
+  });
+
+  it("should render problems when only logicError exists", () => {
+    useAppStore.setState({
+      error: undefined,
+      logicError: "Logic: Trigger failed\nLine 8",
+      backgroundColor: '#ffffff',
+      textColor: '#000000'
+    });
+
+    render(<ProblemPanel />);
+
+    expect(screen.getByText(/Trigger failed/i)).toBeInTheDocument();
     expect(screen.queryByText("No problems detected")).not.toBeInTheDocument();
   });
 
