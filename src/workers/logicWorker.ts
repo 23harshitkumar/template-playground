@@ -1,31 +1,14 @@
 /**
- * logicWorker.ts — Sandboxed Web Worker for executing TemplateLogic
+ * logicWorker.ts — Sandboxed Web Worker for executing user logic.
  *
- * Runs in a dedicated Worker context:
- *   ✓ No DOM access (Web Worker spec)
- *   ✓ No access to React state, Zustand store, or app variables
- *   ✓ Infinite loops killed by main thread via worker.terminate()
- *   ✓ Worker crash is isolated — the app never crashes
- *
- * Execution uses the official @accordproject/template-engine runtime
- * (TemplateArchiveProcessor.init/trigger) as the single source of truth.
+ * Loads compiled JavaScript from the app, imports it via a Blob URL,
+ * instantiates the default-exported logic class, then runs init/trigger.
  */
 
-import { ModelManager } from '@accordproject/concerto-core';
-import { Buffer } from 'buffer';
-import {
-  TemplateArchiveProcessor,
-  getTemplateClassDeclaration,
-} from '@accordproject/template-engine';
 import { normalizeInitPayload, normalizeTriggerPayload } from '../utils/runtimeAdapter';
-
-if (typeof globalThis.Buffer === 'undefined') {
-  (globalThis as { Buffer?: typeof Buffer }).Buffer = Buffer;
-}
 
 interface WorkerMessage {
   action: 'init' | 'trigger';
-  modelCto: string;
   logicJs: string;
   contractData: object;
   request?: object;
@@ -46,63 +29,38 @@ interface WorkerError {
   message: string;
 }
 
-interface TemplateClassLike {
-  getFullyQualifiedName(): string;
+interface LogicModule {
+  default?: new () => {
+    init?: (data: object) => Promise<unknown>;
+    trigger?: (data: object, request: object, state: object) => Promise<unknown>;
+  };
 }
 
-const DEFAULT_LOGIC_IDENTIFIER = 'logic/logic.js';
-
-async function createRuntimeProcessor(
-  modelCto: string,
-  logicJs: string,
-  contractData: object,
-): Promise<TemplateArchiveProcessor> {
-  const modelManager = new ModelManager({ strict: true });
-  modelManager.addCTOModel(modelCto, undefined, true);
-
-  const templateConceptFqn =
-    (contractData as { $class?: unknown }).$class &&
-    typeof (contractData as { $class?: unknown }).$class === 'string'
-      ? (contractData as { $class: string }).$class
-      : undefined;
-
-  const templateClass = getTemplateClassDeclaration(
-    modelManager,
-    templateConceptFqn,
-  ) as TemplateClassLike;
-
-  const scriptFile = {
-    getIdentifier: () => DEFAULT_LOGIC_IDENTIFIER,
-    getContents: () => logicJs,
-  };
-
-  const scriptManager = {
-    getScriptsForTarget: (language: string) =>
-      language === 'es6' ? [scriptFile] : [],
-  };
-
-  const logicManager = {
-    getLanguage: () => 'es6',
-    getScriptManager: () => scriptManager,
-  };
-
-  const templateFacade = {
-    getLogicManager: () => logicManager,
-    getModelManager: () => modelManager,
-    getTemplateModel: () => templateClass,
-  };
-
-  return new TemplateArchiveProcessor(templateFacade as never);
+async function loadLogicModule(logicJs: string): Promise<LogicModule> {
+  const blob = new Blob([logicJs], { type: 'text/javascript' });
+  const moduleUrl = URL.createObjectURL(blob);
+  try {
+    return (await import(/* @vite-ignore */ moduleUrl)) as LogicModule;
+  } finally {
+    URL.revokeObjectURL(moduleUrl);
+  }
 }
 
 self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
-  const { action, modelCto, logicJs, contractData, request, state } = event.data;
+  const { action, logicJs, contractData, request, state } = event.data;
 
   try {
-    const processor = await createRuntimeProcessor(modelCto, logicJs, contractData);
+    const logicModule = await loadLogicModule(logicJs);
+    if (!logicModule.default) {
+      throw new Error('Logic module must export a default class.');
+    }
+
+    const logicInstance = new logicModule.default();
 
     if (action === 'init') {
-      const initResponse = await processor.init(contractData);
+      const initResponse = logicInstance.init
+        ? await logicInstance.init(contractData)
+        : undefined;
       const normalized = normalizeInitPayload(initResponse, { $identifier: 'contract-state' });
 
       self.postMessage({
@@ -119,11 +77,11 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
         );
       }
 
-      const triggerResponse = await processor.trigger(
-        contractData,
-        request ?? {},
-        state
-      );
+      if (!logicInstance.trigger) {
+        throw new Error('Logic class must implement trigger(data, request, state).');
+      }
+
+      const triggerResponse = await logicInstance.trigger(contractData, request ?? {}, state);
       const normalized = normalizeTriggerPayload(triggerResponse, state);
 
       self.postMessage({
