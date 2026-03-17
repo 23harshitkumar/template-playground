@@ -97,11 +97,6 @@ export default function ContractRunner() {
         >
           {isExecuting && !contractState ? 'Initializing...' : 'Init Contract'}
         </button>
-        {contractState && (
-          <span className="contract-runner-init-badge">
-            State initialized ✓
-          </span>
-        )}
       </div>
 
       <div className="contract-runner-divider" />

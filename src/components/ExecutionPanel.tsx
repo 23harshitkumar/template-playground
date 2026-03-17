@@ -172,13 +172,6 @@ export default function ExecutionPanel() {
         )}
 
       </div>
-
-      {/* Footer: execution timestamp */}
-      {hasExecution && (
-        <div className="execution-panel-footer" style={{ color: textColor }}>
-          Last run: {new Date(latestExecution.executedAt).toLocaleTimeString()}
-        </div>
-      )}
     </div>
   );
 }

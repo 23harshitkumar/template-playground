@@ -573,21 +573,10 @@ const useAppStore = create<AppState>()(
           set(() => ({ isExecuting: true, logicError: undefined }));
 
           return new Promise<void>((resolve) => {
-            let worker: Worker;
-            try {
-              worker = new Worker(
-                new URL('../workers/logicWorker.ts', import.meta.url),
-                { type: 'module' }
-              );
-            } catch (workerCreateError: unknown) {
-              set(() => ({
-                isExecuting: false,
-                logicError: `Worker failed to start during init: ${formatError(workerCreateError)}`,
-                isProblemPanelVisible: true,
-              }));
-              resolve();
-              return;
-            }
+            const worker = new Worker(
+              new URL('../workers/logicWorker.ts', import.meta.url),
+              { type: 'module' }
+            );
             activeLogicWorker = worker;
 
             workerTimeout = setTimeout(() => {
@@ -650,22 +639,11 @@ const useAppStore = create<AppState>()(
               resolve();
             };
 
-            try {
-              worker.postMessage({
-                action: 'init',
-                modelCto,
-                logicJs: compiledLogicJs,
-                contractData,
-              });
-            } catch (postMessageError: unknown) {
-              terminateActiveWorker();
-              set(() => ({
-                isExecuting: false,
-                logicError: `Worker postMessage failed during init: ${formatError(postMessageError)}`,
-                isProblemPanelVisible: true,
-              }));
-              resolve();
-            }
+            worker.postMessage({
+              action: 'init',
+              jsCode: compiledLogicJs,
+              contractData,
+            });
           });
         },
 
@@ -722,21 +700,10 @@ const useAppStore = create<AppState>()(
           set(() => ({ isExecuting: true, logicError: undefined }));
 
           return new Promise<void>((resolve) => {
-            let worker: Worker;
-            try {
-              worker = new Worker(
-                new URL('../workers/logicWorker.ts', import.meta.url),
-                { type: 'module' }
-              );
-            } catch (workerCreateError: unknown) {
-              set(() => ({
-                isExecuting: false,
-                logicError: `Worker failed to start during trigger: ${formatError(workerCreateError)}`,
-                isProblemPanelVisible: true,
-              }));
-              resolve();
-              return;
-            }
+            const worker = new Worker(
+              new URL('../workers/logicWorker.ts', import.meta.url),
+              { type: 'module' }
+            );
             activeLogicWorker = worker;
 
             workerTimeout = setTimeout(() => {
@@ -812,24 +779,13 @@ const useAppStore = create<AppState>()(
               resolve();
             };
 
-            try {
-              worker.postMessage({
-                action: 'trigger',
-                modelCto,
-                logicJs: compiledLogicJs,
-                contractData,
-                request,
-                state: stateBefore,
-              });
-            } catch (postMessageError: unknown) {
-              terminateActiveWorker();
-              set(() => ({
-                isExecuting: false,
-                logicError: `Worker postMessage failed during trigger: ${formatError(postMessageError)}`,
-                isProblemPanelVisible: true,
-              }));
-              resolve();
-            }
+            worker.postMessage({
+              action: 'trigger',
+              jsCode: compiledLogicJs,
+              contractData,
+              request,
+              state: stateBefore,
+            });
           });
         },
 
