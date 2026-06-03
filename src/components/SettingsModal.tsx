@@ -42,8 +42,8 @@ const SettingsModal: React.FC = () => {
       children: (
         <Space direction="vertical" size={16} style={{ width: '100%', paddingTop: 4, paddingBottom: 4 }}>
           {/* Dark Mode Toggle */}
-          <Row justify="space-between" align="middle" style={{ width: '100%' }}>
-            <Col flex="auto">
+          <Row justify="space-between" align="middle" wrap={false} style={{ width: '100%' }}>
+            <Col flex="auto" style={{ paddingRight: 16 }}>
               <Text strong style={{ display: 'block' }}>Dark Mode</Text>
               <Text type="secondary" style={{ fontSize: 13 }}>
                 Toggle between light and dark theme
@@ -64,8 +64,8 @@ const SettingsModal: React.FC = () => {
           <Divider style={{ margin: 0 }} />
 
           {/* Line Numbers Toggle */}
-          <Row justify="space-between" align="middle" style={{ width: '100%' }}>
-            <Col flex="auto">
+          <Row justify="space-between" align="middle" wrap={false} style={{ width: '100%' }}>
+            <Col flex="auto" style={{ paddingRight: 16 }}>
               <Text strong style={{ display: 'block' }}>Show Line Numbers</Text>
               <Text type="secondary" style={{ fontSize: 13 }}>
                 Display line numbers in code editors
@@ -83,8 +83,8 @@ const SettingsModal: React.FC = () => {
           <Divider style={{ margin: 0 }} />
 
           {/* Logic Feature Flag Toggle */}
-          <Row justify="space-between" align="middle" style={{ width: '100%' }}>
-            <Col flex="auto">
+          <Row justify="space-between" align="middle" wrap={false} style={{ width: '100%' }}>
+            <Col flex="auto" style={{ paddingRight: 16 }}>
               <Text strong style={{ display: 'block' }}>Enable Template Logic (Experimental)</Text>
               <Text type="secondary" style={{ fontSize: 13 }}>
                 Turn on the experimental TypeScript logic editor and compilation features (GSoC Project).
