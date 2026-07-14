@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import { debounce } from "ts-debounce";
 import { ModelManager } from "@accordproject/concerto-core";
 import { TemplateMarkInterpreter } from "@accordproject/template-engine";
 import { TemplateMarkTransformer } from "@accordproject/markdown-template";
@@ -156,7 +155,35 @@ export interface DecompressedData {
   logicTs?: string;
 }
 
-const rebuildDeBounce = debounce(rebuild, 500);
+function asyncDebounce<F extends (...args: any[]) => Promise<any>>(func: F, wait: number) {
+  let timeout: NodeJS.Timeout | null = null;
+  let resolves: Array<(value: ReturnType<F>) => void> = [];
+  let rejects: Array<(reason?: any) => void> = [];
+
+  return (...args: Parameters<F>): Promise<ReturnType<F>> => {
+    return new Promise((resolve, reject) => {
+      resolves.push(resolve);
+      rejects.push(reject);
+
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        func(...args)
+          .then((res) => {
+            resolves.forEach((r) => r(res));
+            resolves = [];
+            rejects = [];
+          })
+          .catch((err) => {
+            rejects.forEach((r) => r(err));
+            resolves = [];
+            rejects = [];
+          });
+      }, wait);
+    });
+  };
+}
+
+const rebuildDeBounce = asyncDebounce(rebuild, 500);
 
 async function rebuild(
   template: string,
@@ -449,6 +476,7 @@ const useAppStore = create<AppState>()(
               isLogicPanelVisible: hasLogic,
               isContractRunnerVisible: hasLogic,
               isPreviewVisible: !hasLogic,
+              requestJson: sample.REQUEST ? JSON.stringify(sample.REQUEST, null, 2) : '{}',
             }));
 
             // Persist the adaptive layout state
