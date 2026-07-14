@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import { debounce } from "ts-debounce";
 import { ModelManager } from "@accordproject/concerto-core";
 import { TemplateMarkInterpreter } from "@accordproject/template-engine";
 import { TemplateMarkTransformer } from "@accordproject/markdown-template";
@@ -156,7 +155,19 @@ export interface DecompressedData {
   logicTs?: string;
 }
 
-const rebuildDeBounce = debounce(rebuild, 500);
+function asyncDebounce<F extends (...args: any[]) => Promise<any>>(func: F, wait: number) {
+  let timeout: NodeJS.Timeout | null = null;
+  return (...args: Parameters<F>): Promise<ReturnType<F>> => {
+    return new Promise((resolve, reject) => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        func(...args).then(resolve).catch(reject);
+      }, wait);
+    });
+  };
+}
+
+const rebuildDeBounce = asyncDebounce(rebuild, 500);
 
 async function rebuild(
   template: string,
