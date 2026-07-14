@@ -11,6 +11,8 @@ const ContractRunnerPanel: React.FC = () => {
     requestJson,
     setRequestJson,
     executionState,
+    executionResponse,
+    executionEvents,
     isExecuting,
     initContract,
     triggerContract,
@@ -22,6 +24,8 @@ const ContractRunnerPanel: React.FC = () => {
     requestJson: s.requestJson,
     setRequestJson: s.setRequestJson,
     executionState: s.executionState,
+    executionResponse: s.executionResponse,
+    executionEvents: s.executionEvents,
     isExecuting: s.isExecuting,
     initContract: s.initContract,
     triggerContract: s.triggerContract,
@@ -40,7 +44,13 @@ const ContractRunnerPanel: React.FC = () => {
           className="contract-runner-panel-placeholder"
           style={{ color: textColor }}
         >
-          Response Output Coming Soon...
+          {executionResponse ? (
+            <pre style={{ margin: 0, padding: '16px', overflow: 'auto', textAlign: 'left', fontSize: '12px' }}>
+              {executionResponse}
+            </pre>
+          ) : (
+            "Response Output Coming Soon..."
+          )}
         </div>
       ),
     },
@@ -52,7 +62,13 @@ const ContractRunnerPanel: React.FC = () => {
           className="contract-runner-panel-placeholder"
           style={{ color: textColor }}
         >
-          Contract State Coming Soon...
+          {executionState ? (
+            <pre style={{ margin: 0, padding: '16px', overflow: 'auto', textAlign: 'left', fontSize: '12px' }}>
+              {executionState}
+            </pre>
+          ) : (
+            "Contract State Coming Soon..."
+          )}
         </div>
       ),
     },
@@ -64,7 +80,13 @@ const ContractRunnerPanel: React.FC = () => {
           className="contract-runner-panel-placeholder"
           style={{ color: textColor }}
         >
-          Emitted Events Coming Soon...
+          {executionEvents && executionEvents !== '[]' ? (
+            <pre style={{ margin: 0, padding: '16px', overflow: 'auto', textAlign: 'left', fontSize: '12px' }}>
+              {executionEvents}
+            </pre>
+          ) : (
+            "Emitted Events Coming Soon..."
+          )}
         </div>
       ),
     },
