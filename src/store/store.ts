@@ -167,16 +167,17 @@ function asyncDebounce<F extends (...args: any[]) => Promise<any>>(func: F, wait
 
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => {
+        const currentResolves = resolves;
+        const currentRejects = rejects;
+        resolves = [];
+        rejects = [];
+
         func(...args)
           .then((res) => {
-            resolves.forEach((r) => r(res));
-            resolves = [];
-            rejects = [];
+            currentResolves.forEach((r) => r(res));
           })
           .catch((err) => {
-            rejects.forEach((r) => r(err));
-            resolves = [];
-            rejects = [];
+            currentRejects.forEach((r) => r(err));
           });
       }, wait);
     });
