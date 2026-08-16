@@ -301,6 +301,10 @@ function Navbar() {
         <BookOutlined />
         <span>Documentation</span>
       </MenuItem>
+      <MenuItem href="https://docs.accordproject.org/docs/tutorial-template-logic.html">
+        <BookOutlined />
+        <span>Template Logic Tutorial</span>
+      </MenuItem>
     </Menu>
   );
 
@@ -324,6 +328,10 @@ function Navbar() {
         <MenuItem href="https://github.com/accordproject/template-engine/blob/main/README.md">
           <BookOutlined />
           <span>Documentation</span>
+        </MenuItem>
+        <MenuItem href="https://docs.accordproject.org/docs/tutorial-template-logic.html">
+          <BookOutlined />
+          <span>Template Logic Tutorial</span>
         </MenuItem>
       </MenuItemGroup>
     </Menu>

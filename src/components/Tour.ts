@@ -301,7 +301,7 @@ tour.addStep({
 
 tour.addStep({
   id: "learn-button",
-  text: 'Click the "Learn" button to access the Learning Pathway. Here, you will find comprehensive documentation and tutorials to help you create templates effectively.',
+  text: 'Click the "Learn" button to access the Learning Pathway and documentation tutorials—including the full Template Logic Tutorial for authoring and executing smart contract logic.',
   attachTo: {
     element: ".learnNow-button",
     on: "bottom",
